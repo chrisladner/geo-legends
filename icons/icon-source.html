@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- Quelle für das App-Icon. Rendern: siehe README ("Icons neu erzeugen"). ?s=0.6 für die maskable-Variante -->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&display=block">
+<style>
+  html, body { margin: 0; width: 1024px; height: 1024px; overflow: hidden; }
+  body {
+    position: relative;
+    background: radial-gradient(120% 85% at 50% 0%, #22B3C2 0%, #0E7C8A 55%, #085560 100%);
+  }
+  body::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, .13) 0 7px, transparent 7px 128px),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, .13) 0 7px, transparent 7px 128px);
+    -webkit-mask-image: linear-gradient(#000 0%, rgba(0, 0, 0, .35) 45%, transparent 80%);
+  }
+  .fan { position: absolute; left: 50%; top: 53%; width: 0; height: 0; transform: scale(var(--s, .78)); z-index: 1; }
+  .card {
+    position: absolute;
+    width: 400px;
+    height: 560px;
+    left: -200px;
+    top: -300px;
+    background: #fff;
+    border: 28px solid #0F2A3D;
+    border-radius: 64px;
+    box-shadow: 0 30px 0 #0F2A3D;
+    transform-origin: 50% 135%;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 118px;
+    background: var(--c);
+    border-bottom: 28px solid #0F2A3D;
+  }
+  .l { transform: translateX(-135px) rotate(-15deg); --c: #EDA772; }
+  .r { transform: translateX(135px) rotate(15deg); --c: #FFD23F; }
+  .f { --c: linear-gradient(#ED2939 0 33.4%, #fff 33.4% 66.6%, #ED2939 66.6%); }
+  .f svg { position: absolute; left: 50%; top: 175px; width: 290px; height: 290px; margin-left: -145px; }
+</style>
+</head>
+<body>
+  <div class="fan"><div class="card l"></div><div class="card r"></div><div class="card f">
+    <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="#9ED8F2" stroke="#0F2A3D" stroke-width="4"/>
+      <path d="M15 21c5-4 11-3 14 1s-1 7 3 10 4 8-1 11-11 1-13-4-7-6-6-10 0-6 3-8zM38 14c5 0 11 3 14 9-3 1-7 0-9 3s1 7-2 9-6-1-6-6-4-6-3-10 2-5 6-5z" fill="#B6F23A" stroke="#0F2A3D" stroke-width="2.5" stroke-linejoin="round"/>
+      <ellipse cx="32" cy="32" rx="12" ry="27" fill="none" stroke="#0F2A3D" stroke-width="2.5" opacity=".45"/>
+      <path d="M5 32h54" stroke="#0F2A3D" stroke-width="2.5" opacity=".45"/></svg>
+  </div></div>
+  <script>
+    const s = new URLSearchParams(location.search).get('s');
+    if (s) document.querySelector('.fan').style.setProperty('--s', s);
+  </script>
+</body>
+</html>
