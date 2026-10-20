@@ -10,7 +10,9 @@ Länder Europas + Hauptstädte, Kontinente und Ozeane).
 
 ## Aufs iPhone
 
-1. In **Safari** die veröffentlichte Adresse öffnen.
+Live: **https://chrisladner.github.io/geo-legends/** (GitHub Pages aus `main` /, Update = commit + push)
+
+1. In **Safari** die Adresse öffnen.
 2. Teilen-Symbol → **„Zum Home-Bildschirm“**.
 3. Ab jetzt nur noch über das Icon starten. Der Fortschritt liegt auf dem Gerät, in der
    Home-Bildschirm-App. Sicherung: Einstellungen → „Code kopieren“.
