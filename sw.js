@@ -1,14 +1,20 @@
 /* Geo Legends – Offline-Cache.
-   App-Dateien: sofort aus dem Cache, im Hintergrund aktualisiert (neue Version ab dem nächsten Öffnen).
-   Schrift von Google Fonts: einmal laden, dann aus dem Cache. */
-const VERSION = 'gl-v1';
+   App-Dateien: mit Internet immer frisch vom Server (höchstens 2,5 s warten), ohne Internet aus dem Cache.
+   Schrift von Google Fonts: einmal laden, dann aus dem Cache.
+   VERSION zusammen mit VERSION in app.js hochzählen. */
+const VERSION = 'gl-v2';
 const FONT_CACHE = 'gl-fonts';
+const NET_WAIT = 2500;
+// gl-v1 hat aus dem Cache geladen und konnte sich nach einem Update nicht selbst neu laden
+const LEGACY = /^gl-v1$/;
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './maps.js',
   './data.js',
+  './legends-status.js',
+  './legends-sync.js',
   './app.js',
   './manifest.webmanifest',
   './icons/apple-touch-icon.png',
@@ -17,16 +23,30 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' – frisch vom Server, nicht aus dem Browser-Zwischenspeicher (sonst können alte Dateien hängen bleiben)
+  event.waitUntil(caches.open(VERSION)
+    .then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== VERSION && k !== FONT_CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+  const cleanup = (async () => {
+    // Nur die eigenen alten Caches löschen: Word Legends liegt auf GitHub Pages unter derselben Adresse
+    const old = (await caches.keys()).filter(k => /^gl-/.test(k) && k !== VERSION && k !== FONT_CACHE);
+    await Promise.all(old.map(k => caches.delete(k)));
+    await self.clients.claim();
+    return old.some(k => LEGACY.test(k));
+  })();
+  event.waitUntil(cleanup);
+  // Update von einer alten Version: die offene Seite einmal neu laden, dann ist es sofort zu sehen.
+  // Nicht in waitUntil – die Seite kann erst laden, wenn dieser Worker fertig aktiviert ist.
+  cleanup.then(fromLegacy => fromLegacy && reloadWindows(), () => {});
 });
+
+async function reloadWindows() {
+  const wins = await self.clients.matchAll({ type: 'window' });
+  wins.forEach(w => { if (w.navigate) w.navigate(w.url).catch(() => {}); });
+}
 
 self.addEventListener('fetch', event => {
   const req = event.request;
@@ -34,17 +54,17 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url);
 
   if (url.origin === self.location.origin) {
-    const network = fetch(req).then(res => {
+    let saved = Promise.resolve();
+    const network = fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(res => {
       if (res.ok) {
         const copy = res.clone();
-        caches.open(VERSION).then(c => c.put(req, copy));
+        saved = caches.open(VERSION).then(c => c.put(req, copy));
       }
       return res;
     });
-    event.respondWith(
-      caches.match(req, { ignoreSearch: true }).then(hit => hit || network.catch(() => caches.match('./index.html')))
-    );
-    event.waitUntil(network.then(() => {}, () => {}));
+    // Kommt die Antwort erst nach der Wartezeit, wird der Cache trotzdem aufgefrischt
+    event.waitUntil(network.then(() => saved).catch(() => {}));
+    event.respondWith(freshOrCached(req, network));
     return;
   }
 
@@ -60,3 +80,13 @@ self.addEventListener('fetch', event => {
     );
   }
 });
+
+async function freshOrCached(req, network) {
+  const timeout = new Promise(resolve => setTimeout(resolve, NET_WAIT, null));
+  const res = await Promise.race([network.catch(() => null), timeout]);
+  if (res && res.ok) return res;
+  const hit = await caches.match(req, { ignoreSearch: true })
+    || (req.mode === 'navigate' && await caches.match('./index.html'));
+  // nichts im Cache: auf das Netz warten
+  return hit || res || network;
+}

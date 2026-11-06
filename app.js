@@ -1,16 +1,22 @@
 /* Geo Legends – Erdkunde-Trainer
    Vanilla JS, keine Abhängigkeiten. Fortschritt liegt in localStorage.
    Lernmodell: Karteikasten mit Stempeln (Bronze → Silber → Gold → Diamant).
-   Neues wird bis zum Testdatum verteilt, am Tag davor kommt alles noch einmal dran (Generalprobe). */
+   Neues wird bis zum Testdatum verteilt, am Tag davor kommt alles noch einmal dran (Generalprobe).
+   Eltern-Verbindung (freiwillig): Lagebericht und verschlüsselte Sicherung an Legends HQ,
+   Bausteine legends-status.js und legends-sync.js (Kopien aus legends-hq/shared, nicht hier ändern). */
 (() => {
 'use strict';
 
 const GEO = window.GEO;
 const MAPS = window.MAPS;
+// Fehlen die gemeinsamen Bausteine (sollte nie passieren), läuft die App ohne Plan-Karte und ohne Verbindung weiter
+const LS = window.LegendsStatus || null;
+const SYNC = window.LegendsSync || null;
 
 // ================================================================
 // Konstanten
 // ================================================================
+const VERSION = 'gl-v2';   // wie in sw.js – beide zusammen hochzählen
 const STORE_KEY = 'geolegends.v1';
 const INTERVALS = [0, 1, 1, 2, 4];   // Tage Pause nach Erreichen der Stufe 1–4
 const DIAMOND_INTERVAL = 7;          // Diamant und wieder richtig
@@ -244,42 +250,90 @@ function niceDate(ds) {
   const dt = new Date(y, m - 1, d, 12);
   return `${WEEKDAY[dt.getDay()]}, ${d}.${m}.`;
 }
-function testDays() { return S.settings.testDate ? daysBetween(today(), S.settings.testDate) : null; }
+function weekday(ds) {
+  const [y, m, d] = ds.split('-').map(Number);
+  return WEEKDAY[new Date(y, m - 1, d, 12).getDay()];
+}
+function isDay(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+// Uhrzeit des Geräts (für den Lagebericht; ohne Zeitsprung)
+function clock() { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+
+// ---------- Testtermin ----------
+// Der offizielle Termin steht in data.js (GEO.testDate, eingetragen von Mama und Papa über /stoff) und geht
+// immer vor – das Kind kann ihn nicht verschieben. Einen eigenen Termin (S.settings.testDate) gibt es nur, wenn
+// kein offizieller ansteht. Bis gl-v1 stand der offizielle Termin auch im Speicher; der alte Wert zählt nicht.
+function officialTest() { return isDay(GEO.testDate) && GEO.testDate >= today() ? GEO.testDate : ''; }
+function ownTest() {
+  const t = S.settings.testDate;
+  return !officialTest() && isDay(t) && t !== GEO.testDate && t >= today() ? t : '';
+}
+function testDate() { return officialTest() || ownTest(); }
+function testDays() { const t = testDate(); return t ? daysBetween(today(), t) : null; }
+// Für den Lagebericht: { datum, titel, quelle, seit }; seit = eingetragen am (GEO.testSeit setzt /stoff,
+// fehlt es, bleibt seit weg und bericht() nimmt den Tag, an dem die App den Termin zuerst sieht)
+function testInfo() {
+  const withSeit = (o, seit) => (isDay(seit) ? { ...o, seit } : o);
+  const off = officialTest();
+  if (off) return withSeit({ datum: off, titel: GEO.testTitle || 'GW-Test', quelle: 'eltern' }, GEO.testSeit);
+  const own = ownTest();
+  if (own) return withSeit({ datum: own, titel: 'GW-Test', quelle: 'selbst' }, S.settings.testSeit);   // kein Name im Bericht
+  return null;
+}
 
 // ================================================================
 // Speicher
 // ================================================================
+// testDate = eigener Termin des Kindes (nur ohne offiziellen), testSeit = an dem Tag eingetragen.
+// log = Tagesprotokoll für den Lagebericht { 'JJJJ-MM-TT': { a, r, n, s, f, o, k } }, höchstens 90 Tage.
+// plaene = eingefrorener Plan je Termin, legt LegendsStatus.bericht() selbst ab (schnittstelle.md §5).
 function fresh() {
   return {
     v: 1,
-    settings: { name: '', testDate: GEO.testDate || '', sel: null, sfx: true },
+    settings: { name: '', testDate: '', testSeit: '', sel: null, sfx: true },
     it: {},
     stats: { xp: 0, streak: 0, best: 0, lastDay: '', answers: 0, right: 0, sessions: 0 },
     day: { date: '', newCount: 0 },
-    ui: { hideInstall: false, onboarded: false }
+    ui: { hideInstall: false, onboarded: false },
+    log: {},
+    plaene: {}
   };
 }
+// Jedes Feld einzeln: was hier fehlt, ist nach dem nächsten Start weg
 function upgrade(s) {
   const d = fresh();
-  return {
+  const out = {
     v: 1,
     settings: { ...d.settings, ...(s.settings || {}) },
     it: s.it && typeof s.it === 'object' ? s.it : {},
     stats: { ...d.stats, ...(s.stats || {}) },
     day: { ...d.day, ...(s.day || {}) },
-    ui: { ...d.ui, ...(s.ui || {}) }
+    ui: { ...d.ui, ...(s.ui || {}) },
+    log: s.log && typeof s.log === 'object' && !Array.isArray(s.log) ? s.log : {},
+    plaene: s.plaene && typeof s.plaene === 'object' && !Array.isArray(s.plaene) ? s.plaene : {}
   };
+  // Bis gl-v1 wurde der offizielle Termin aus data.js in den Speicher kopiert (auf dem Gerät des Kindes: 2026-10-23).
+  // Ein vergangener oder offizieller Termin ist kein eigener Termin – weg damit, er würde sonst stören.
+  const t = out.settings.testDate;
+  if (t && (!isDay(t) || t < today() || t === GEO.testDate)) { out.settings.testDate = ''; out.settings.testSeit = ''; }
+  if (LS) LS.kuerzen(out.log, today());
+  return out;
 }
 function load() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    raw = localStorage.getItem(STORE_KEY);
     if (raw) return upgrade(JSON.parse(raw));
-  } catch (e) { /* frisch starten */ }
+  } catch (e) {
+    // Frisch starten – aber den unlesbaren Stand vorher beiseitelegen, sonst überschreibt ihn das nächste save()
+    try { if (raw) localStorage.setItem(STORE_KEY + '.kaputt', raw); } catch (e2) { /* egal */ }
+  }
   return fresh();
 }
 let S = load();
 let saveWarned = false;
+let rev = 0;   // zählt jede Speicherung – ändert sich nichts, wird der Lagebericht nicht neu gerechnet
 function save() {
+  rev++;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); }
   catch (e) {
     if (!saveWarned) { saveWarned = true; toast('Speichern klappt gerade nicht. Ist privates Surfen an?'); }
@@ -298,7 +352,7 @@ function chosenCount() { return GEO.countries.filter(chosen).length; }
 // ================================================================
 // Mit Testdatum: keine Karte wird erst nach dem Tag vor dem Test fällig (Generalprobe)
 function effDue(st) {
-  const t = S.settings.testDate;
+  const t = testDate();
   if (t && daysBetween(today(), t) >= 1) {
     const cap = addDays(t, -1);
     return st.due < cap ? st.due : cap;
@@ -391,6 +445,119 @@ function levelInfo(xp) {
   let title = TITLES[0][1];
   for (const [l, name] of TITLES) if (lvl >= l) title = name;
   return { lvl, into: xp - base, need, title };
+}
+
+// ================================================================
+// Lagebericht und Eltern-Verbindung (Legends HQ)
+// Vertrag: legends-hq/docs/schnittstelle.md. Die App rechnet den Bericht selbst, denn nur hier liegen
+// Plan und Fälligkeiten. Ohne Verbindungs-Code verlässt nichts das Gerät; die Plan-Karte rechnet trotzdem.
+// ================================================================
+// Tagesprotokoll: Sekunden je Aufgabe vom Anzeigen bis zur Antwort (LegendsStatus kappt bei 60)
+function logAnswer(right, sec) { if (LS) LS.zaehleAntwort(S.log, today(), right, sec); }
+function logNew(sec) { if (LS) LS.zaehleNeu(S.log, today(), sec); }
+function logTime(sec) { if (LS) LS.zaehleZeit(S.log, today(), sec); }
+
+// Neues kommt in ganzen Paketen; für die Prognose zählt die mittlere Größe der noch offenen Pakete
+function openPackSize() {
+  const unseen = unseenItems();
+  if (!unseen.length) return 1;
+  return Math.max(1, Math.round(unseen.length / new Set(unseen.map(it => it.pack)).size));
+}
+function cardLabel(it) {
+  if (it.kind === 'cap') return `${it.ref.name} → ${it.ref.cap}`;
+  if (it.kind === 'loc') return it.ref.name;
+  return it.ref.label;
+}
+
+// Eingabe für LegendsStatus.bericht (schnittstelle.md §5). Ziel = alle aktiven Aufgaben.
+function berichtEingabe() {
+  const test = testInfo();
+  const unseen = unseenItems().length;
+  const dm = ds => ds.slice(8, 10) + '.' + ds.slice(5, 7) + '.';
+  return {
+    app: 'gl', name: 'Geo Legends', version: VERSION,
+    heute: today(), zeit: clock(),
+    test,
+    ziel: test ? `${test.titel} ${dm(test.datum)}` : 'alle Themen',
+    karten: seenItems().map(it => {
+      const st = S.it[it.id];
+      return { lv: st.lv, due: effDue(st), last: st.last, since: st.since, imZiel: true, label: cardLabel(it), ok: st.ok || 0, bad: st.bad || 0 };
+    }),
+    neuOffen: { ziel: unseen, gesamt: unseen },
+    heuteOffen: { faellig: dueItems().length, neu: newQuota() },
+    regeln: {
+      pausen: INTERVALS, maxPause: DIAMOND_INTERVAL, maxStufe: 4, sicherAb: 3, fehlerMinus: 1,
+      neuProTag: test ? 10 : NEW_DEFAULT, vorlauf: 1, wdhLimit: 0, paket: openPackSize()
+    },
+    log: S.log,
+    plaene: S.plaene
+  };
+}
+
+// Ausgelassene Tage ins Protokoll eintragen, solange die Karten noch zeigen, was dort fällig war. bericht()
+// erkennt Tage ohne Eintrag nur an den Karten – nach der nächsten Runde steht dort „zuletzt geübt: heute“,
+// und ein ausgelassener Tag sähe aus wie ein freier. Erst ab dem ersten Protokolltag (also ab gl-v2, die Zeit
+// davor zählt nicht gegen das Kind), höchstens 14 Tage zurück (so weit reicht der Bericht). Einmal pro Tag.
+let filledFor = '';
+function fillMissedDays() {
+  const t = today();
+  if (!LS || filledFor === t) return;
+  filledFor = t;
+  const first = Object.keys(S.log).sort()[0];
+  if (!first) return;
+  const seen = seenItems(), test = testInfo(), unseen = unseenItems().length;
+  let added = 0;
+  for (let i = 14; i >= 1; i--) {
+    const d = addDays(t, -i);
+    if (d <= first || S.log[d]) continue;
+    const due = seen.filter(it => { const st = S.it[it.id]; return st.last < d && effDue(st) <= d; }).length;
+    const newPlanned = !!(test && test.seit && d >= test.seit && d < test.datum && unseen);   // wie in bericht()
+    if (due || newPlanned) { LS.eintrag(S.log, d).o = Math.max(1, due); added++; }
+  }
+  if (added) save();
+}
+
+// Der Bericht kostet am iPhone spürbar Zeit (Prognose = 160 Simulationen) – neu gerechnet wird nur, wenn sich
+// der Stand oder der Tag geändert hat. bericht() schreibt f, o, k von heute ins Protokoll, darum danach save().
+let berichtCache = null;
+function lagebericht() {
+  fillMissedDays();
+  if (berichtCache && berichtCache.key === today() + '|' + rev) {
+    berichtCache.b.zeit = clock();
+    return berichtCache.b;
+  }
+  const b = LS.bericht(berichtEingabe());
+  save();
+  berichtCache = { key: today() + '|' + rev, b };
+  return b;
+}
+
+// Alle Server-Aufrufe nacheinander: LegendsSync liest und schreibt seinen Zustand in localStorage, zwei
+// gleichzeitige Aufrufe würden sich gegenseitig die Uhrzeit von „gemeldet“/„gesichert“ überschreiben.
+let hqChain = Promise.resolve();
+function hqQueue(job) {
+  hqChain = hqChain.then(job).catch(() => {}).then(() => { if (screen === 'settings') hqShowState(); });
+  return hqChain;
+}
+function hqOn() { return !!(LS && SYNC && SYNC.verbunden()); }
+
+// Lagebericht melden – nie blockierend, Fehler still (LegendsSync merkt sie sich für die Einstellungen).
+// Ohne force höchstens einmal pro Minute, damit Hin- und Herwechseln zwischen Apps nicht jedes Mal sendet.
+let hqLast = 0;
+function hqReport(force) {
+  // Beim Start und Zurückholen höchstens alle 10 Minuten (KV-Schreibgrenze), am Rundenende immer
+  if (!hqOn() || (!force && Date.now() - hqLast < 10 * 60e3)) return Promise.resolve();
+  hqLast = Date.now();
+  return hqQueue(() => SYNC.melden(lagebericht()));
+}
+// Am Ende jeder Runde: Bericht rechnen – auch ohne Verbindung, denn erst er trägt „fertig“, „offen“ und
+// „sicher“ von heute ins Protokoll (sonst gilt der Tag später nur als angefangen). Mit Verbindung dann
+// melden und den ganzen Stand verschlüsselt sichern.
+function afterRound() {
+  if (LS) { try { lagebericht(); } catch (e) { /* Plan-Karte und Bericht dürfen nie das Üben stören */ } }
+  if (!hqOn()) return;
+  hqReport(true);
+  hqQueue(() => SYNC.sichern(S, { tag: today(), version: VERSION }));
 }
 
 // ================================================================
@@ -1057,6 +1224,7 @@ function declutter(items, u) {
 // Screens
 // ================================================================
 let screen = '';
+let updateReady = false;   // neue Version im Hintergrund geladen – beim nächsten Mal auf der Startseite neu laden
 
 function topbar(title, back = 'home') {
   return `<header class="topbar">
@@ -1084,7 +1252,7 @@ function welcome() {
       <span class="mini hero-card" style="--i:0">${GLOBE}</span>
     </div>
     <h1 class="outline hero">Geo Legends</h1>
-    <p class="lead">Österreich, Europa und die ganze Welt –<br>auf der Karte gelernt.${d !== null && d >= 0 ? `<br>Fit für den Test am ${esc(niceDate(S.settings.testDate))}` : ''}</p>
+    <p class="lead">Österreich, Europa und die ganze Welt –<br>auf der Karte gelernt.${d !== null && d >= 0 ? `<br>Fit für den Test am ${esc(niceDate(testDate()))}` : ''}</p>
     <ul class="rules">
       <li><span>🗺️</span><p><b>Karten statt Listen:</b> Du tippst auf die Karte und schreibst die Namen selbst – so wie im Test.</p></li>
       <li><span>🥇</span><p><b>Stempel sammeln:</b> Bronze, Silber, Gold, Diamant. Jeden Tag kann ein Stempel eine Stufe steigen.</p></li>
@@ -1114,6 +1282,7 @@ function isStandalone() { return navigator.standalone === true || matchMedia('(d
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 
 function home() {
+  if (updateReady) { location.reload(); return; }
   scrollTo(0, 0);
   screen = 'home';
   stopFx();
@@ -1191,6 +1360,7 @@ function home() {
       ${testPill}
     </div>
     <div class="panel mission">${mission}</div>
+    ${planCard()}
     ${installHint}
     <div class="passport">
       <div class="shelf-head"><h2>Dein Reisepass</h2><span>${tierLegend()}</span></div>
@@ -1201,6 +1371,29 @@ function home() {
       <button class="btn" type="button" data-act="atlas">🧭 Atlas</button>
     </div>
   </section>`;
+}
+
+// ---------- Plan-Karte ----------
+// Dieselbe Ampel wie bei Mama und Papa, aber im Ton fürs Kind: Im Plan · Aufholen · Notfallplan.
+// Kein Rot, keine Minuten, keine XP – es geht um Können gegen den Plan. Rechnet auch ohne Verbindung.
+const DAY_WORD = { fertig: 'geschafft', teil: 'angefangen', aus: 'nicht geübt', frei: 'frei', offen: 'noch offen' };
+function planCard() {
+  if (!LS) return '';
+  let b, u;
+  try { b = lagebericht(); u = LS.urteil(b, today()); } catch (e) { return ''; }
+  // Die letzten 7 Tage: 6 aus dem Bericht, dazu heute (noch nicht vorbei, darum „offen“ statt „nicht geübt“)
+  const e = S.log[today()] || {};
+  const practiced = (e.a || 0) + (e.n || 0) > 0;
+  const days = b.tage.slice(-6).map(t => ({ d: t.d, s: t.s }));
+  days.push({ d: today(), s: b.heute.fertig ? (practiced ? 'fertig' : 'frei') : (practiced ? 'teil' : 'offen'), heute: true });
+  const tone = u.stufe === 'rot' ? 'tone-sos' : u.stufe === 'gelb' ? 'tone-catch' : 'tone-ok';
+  return `<div class="panel plan ${tone}">
+    <div class="plan-head"><span class="plan-badge" aria-hidden="true">🧭</span>
+      <div><b class="plan-title">${esc(u.kind.titel)}</b><p class="plan-text">${esc(u.kind.text)}</p></div></div>
+    <div class="plan-days">${days.map(x => `<span class="pday ${x.s}${x.heute ? ' today' : ''}" aria-label="${x.heute ? 'heute' : weekday(x.d)}: ${DAY_WORD[x.s] || x.s}">
+      <i>${x.s === 'fertig' ? '✓' : ''}</i>${x.heute ? 'heute' : weekday(x.d)}</span>`).join('')}</div>
+    <p class="plan-note">Das sehen Mama und Papa auch.</p>
+  </div>`;
 }
 
 function tierLegend() {
@@ -1456,12 +1649,49 @@ function toggleHTML(key, title, help) {
   </label>`;
 }
 
+// Eltern-Verbindung: Code einfügen (nicht per Link – ein Link öffnet Safari, und die Home-Bildschirm-App
+// hat eigenen Speicher). Der Code liegt getrennt vom Fortschritt und steht nie im Sicherungs-Code.
+function hqPanel() {
+  if (!LS || !SYNC) return '';
+  const on = SYNC.verbunden();
+  return `<div class="panel form hq">
+      <div class="field"><b>Eltern-Verbindung</b>
+        <small>Mama und Papa sehen, ob du im Plan bist – dasselbe wie auf deiner Startseite. Deine Antworten bleiben verschlüsselt.</small></div>
+      ${on ? `<p class="hq-state" id="hq-state" aria-live="polite"></p>
+      <div class="two hq-btns"><button class="btn" type="button" data-act="hqRestore">Aus Sicherung holen</button><button class="btn" type="button" data-act="hqOff">Trennen</button></div>`
+    : `<input id="hq-code" type="text" placeholder="Verbindungs-Code (HQ1:…)" aria-label="Verbindungs-Code" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
+      <p class="hq-state" id="hq-state" aria-live="polite" hidden></p>
+      <button class="btn go" type="button" id="hq-go" data-act="hqConnect">Verbinden</button>`}
+    </div>`;
+}
+// 'JJJJ-MM-TT HH:MM' → '18:02' (heute) oder '5.11. 18:02'
+function hqWhen(s) {
+  const [d, t] = String(s).split(' ');
+  if (d === fmt(new Date())) return t || '';
+  const [, m, dd] = d.split('-').map(Number);
+  return `${dd}.${m}. ${t || ''}`.trim();
+}
+function hqShowState() {
+  const el = $('#hq-state');
+  if (!el || !SYNC || !SYNC.verbunden()) return;
+  const z = SYNC.zustand();
+  const line = ['✓ verbunden', z.gemeldet ? 'gemeldet ' + hqWhen(z.gemeldet) : 'noch nicht gemeldet'];
+  if (z.gesichert) line.push('gesichert ' + hqWhen(z.gesichert));
+  el.innerHTML = esc(line.join(' · ')) + (z.fehler ? `<small>Letzter Versuch: ${esc(z.fehler)}${z.wartet ? ' – wird später nachgeholt' : ''}</small>` : '');
+}
+
 function settings() {
   scrollTo(0, 0);
   screen = 'settings';
   stopFx();
   clearViews();
   const s = S.settings;
+  const off = officialTest(), own = ownTest();
+  const testRow = off
+    ? `<span class="daterow"><input id="set-test" type="date" value="${esc(off)}" disabled></span>
+        <small><b class="locked">🔒 Termin von Mama/Papa.</b> Bis zwei Tage vor dem Test kommt alles Neue dran. Am Tag davor ist Generalprobe: Jede Aufgabe kommt noch einmal.</small>`
+    : `<span class="daterow"><input id="set-test" type="date" value="${esc(own)}">${own ? '<button class="link" type="button" data-act="clearTest">löschen</button>' : ''}</span>
+        <small>Bis zwei Tage vor dem Test kommt alles Neue dran. Am Tag davor ist Generalprobe: Jede Aufgabe kommt noch einmal.</small>`;
   app.innerHTML = `
   <section class="screen settings">
     ${topbar('Einstellungen')}
@@ -1469,8 +1699,7 @@ function settings() {
       <label class="field"><b>Name</b>
         <input id="set-name" type="text" maxlength="20" value="${esc(s.name)}" autocomplete="off" autocorrect="off" spellcheck="false"></label>
       <label class="field"><b>Testdatum</b>
-        <span class="daterow"><input id="set-test" type="date" value="${esc(s.testDate)}">${s.testDate ? '<button class="link" type="button" data-act="clearTest">löschen</button>' : ''}</span>
-        <small>Bis zwei Tage vor dem Test kommt alles Neue dran. Am Tag davor ist Generalprobe: Jede Aufgabe kommt noch einmal.</small></label>
+        ${testRow}</label>
       <div class="field"><b>Markierte Länder</b>
         <button class="btn" type="button" data-act="chooseFromSettings">${chosenCount()} ${chosenCount() === 1 ? 'Land' : 'Länder'} ausgewählt · ändern</button>
         <small>Nur diese Länder kommen bei „Länder Europas“ dran.</small></div>
@@ -1482,18 +1711,33 @@ function settings() {
         <small>Der Code enthält den ganzen Fortschritt. Damit kannst du alles wiederherstellen, z. B. auf einem neuen Handy.</small></div>
       <div class="two"><button class="btn" type="button" data-act="exportCode">Code kopieren</button><button class="btn" type="button" data-act="importCode">Code einfügen</button></div>
     </div>
+    ${hqPanel()}
     <button class="btn danger big" type="button" data-act="reset">Fortschritt löschen</button>
-    <p class="fineprint center">Geo Legends · ${ITEMS.filter(active).length} Aufgaben · Karten: Natural Earth, Statistik Austria</p>
+    <p class="fineprint center">Geo Legends · ${ITEMS.filter(active).length} Aufgaben · Karten: Natural Earth, Statistik Austria<span id="set-ver"> · Version ${VERSION.slice(4)}</span></p>
   </section>`;
+
+  // Version = Name des Offline-Caches (gl-v2 → „Version 2“), damit man am Handy sieht, ob ein Update angekommen ist.
+  // Ohne Offline-Cache (z. B. ?nosw) steht die Version aus app.js da.
+  if (window.caches) caches.keys().then(keys => {
+    const v = keys.filter(k => /^gl-v\d+$/.test(k)).sort((a, b) => b.slice(4) - a.slice(4))[0];
+    const el = $('#set-ver');
+    if (v && el) el.textContent = ` · Version ${v.slice(4)}`;
+  }).catch(() => {});
+
   $('#set-name').addEventListener('change', e => { S.settings.name = e.target.value.trim().slice(0, 20); save(); });
   $('#set-test').addEventListener('change', e => {
     const v = e.target.value;
-    if (v && daysBetween(today(), v) < 0) { toast('Das Datum liegt in der Vergangenheit.'); e.target.value = S.settings.testDate; return; }
+    if (officialTest()) { e.target.value = officialTest(); return; }   // gesperrt: Termin von Mama/Papa
+    if (v && daysBetween(today(), v) < 0) { toast('Das Datum liegt in der Vergangenheit.'); e.target.value = ownTest(); return; }
     S.settings.testDate = v;
+    S.settings.testSeit = v ? today() : '';
     save();
     settings();
     if (v) toast(`Test ${inDays(daysBetween(today(), v))} – alles klar!`);
   });
+  const code = $('#hq-code');
+  if (code) code.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); hqConnect(); } });
+  hqShowState();
   app.querySelectorAll('[data-set]').forEach(el => el.addEventListener('change', () => {
     S.settings[el.dataset.set] = el.checked;
     save();
@@ -1688,6 +1932,7 @@ function showTask() {
   SES.hintUsed = false;
   SES.emptyOnce = false;
   SES.list = null;
+  SES.shownAt = Date.now();   // für das Tagesprotokoll: Sekunden vom Anzeigen bis zur Antwort
   if (t.type === 'pack') return showPack(t);
   const it = IT[t.id];
   if (!t.fmt) t.fmt = fmtFor(it, t.step);
@@ -1844,8 +2089,10 @@ function packTap(id) {
 
 function onNext() {
   if (!SES) return;
+  if (SES.phase === 'pack') { logTime(taskSecs()); save(); }   // Paket anschauen ist auch Lernzeit
   if (SES.phase === 'pack' || SES.phase === 'feedback') next();
 }
+function taskSecs() { return SES && SES.shownAt ? (Date.now() - SES.shownAt) / 1000 : 0; }
 
 function onSubmit() {
   if (!SES || !SES.cur) return;
@@ -1889,7 +2136,10 @@ function addXP(n) {
 function resolve(res, info) {
   const t = SES.cur, it = IT[t.id], f = t.fmt;
   const good = res === 'ok';
-  if (!S.it[it.id]) { collect(it.id); SES.learned.push(it.id); }
+  const sec = taskSecs();
+  fillMissedDays();   // vor der ersten Antwort eines neuen Tages (App über Nacht offen geblieben)
+  const isNew = !S.it[it.id];
+  if (isNew) { collect(it.id); SES.learned.push(it.id); }
   const st = S.it[it.id];
 
   SES.first++;
@@ -1907,6 +2157,10 @@ function resolve(res, info) {
     const tm = addDays(today(), 1);
     if (st.due > tm) st.due = tm;
   }
+  // Tagesprotokoll: erster Versuch einer fälligen Aufgabe (zählt für den Stempel) · neu eingeführt · sonst nur Zeit
+  if (sched) logAnswer(good, sec);
+  else if (isNew) logNew(sec);
+  else logTime(sec);
 
   let xp = 0;
   if (good) {
@@ -2145,7 +2399,7 @@ function testAnswer(val, mcOk) {
     : it.ref.label;
   const answer = modeOf(f) === 'cap' ? it.ref.cap : modeOf(f) === 'fact' ? it.ref.show : fullName(it.ref);
   SES.results.push({ id: it.id, input: String(val || '').trim(), res, pts, section: t.section, q, answer });
-  if (!S.it[it.id]) collect(it.id);
+  if (!S.it[it.id]) { collect(it.id); logNew(taskSecs()); } else logTime(taskSecs());
   const st = S.it[it.id];
   S.stats.answers++;
   if (pts === 1) { S.stats.right++; st.ok++; }
@@ -2188,6 +2442,7 @@ async function quit() {
     return;
   }
   if (s.mode !== 'test' && s.first >= 10) { markDay(); save(); }
+  if (s.first || (s.results && s.results.length)) afterRound();   // Abgebrochen ist auch ein Ende: Geübtes melden
   home();
 }
 
@@ -2196,12 +2451,13 @@ function finish() {
   E.input.blur();
   SES = null;
   document.body.classList.remove('in-session');
-  if (s.mode === 'test') { markDay(); S.stats.sessions++; save(); return testResult(s); }
+  if (s.mode === 'test') { markDay(); S.stats.sessions++; save(); testResult(s); afterRound(); return; }
   if (s.mode === 'mission' && !dueItems().length && !newQuota()) { S.stats.xp += XP.round; s.xp += XP.round; }
   const streakUp = markDay();
   S.stats.sessions++;
   save();
   summary(s, { streakUp });
+  afterRound();
 }
 
 // ================================================================
@@ -2229,6 +2485,7 @@ async function importCode() {
     const obj = JSON.parse(decodeURIComponent(escape(atob(txt))));
     if (!obj || typeof obj.it !== 'object' || !obj.settings) throw new Error('kein Geo-Legends-Code');
     S = upgrade(obj);
+    filledFor = '';   // ausgelassene Tage seit dem Code nachtragen
     save();
     toast('Fortschritt wiederhergestellt ✓');
     home();
@@ -2236,6 +2493,82 @@ async function importCode() {
     toast('Der Code passt nicht. Bitte ganz kopieren.');
   }
 }
+// ---------- Eltern-Verbindung: verbinden, aus der Sicherung holen, trennen ----------
+function geoStand(d) {
+  return !!d && (!d.app || d.app === 'gl') && !!d.stand && typeof d.stand === 'object'
+    && !!d.stand.it && typeof d.stand.it === 'object' && !!d.stand.settings;
+}
+function hqFail(e) {
+  const st = e && e.status;
+  if (st === 404) return 'Auf dem Server liegt noch keine Sicherung.';
+  if (st === 401) return 'Der Code passt nicht zum Server.';
+  if (st) return 'Server-Fehler ' + st + '. Später nochmal probieren.';
+  if (e && (e.name === 'OperationError' || /Format/.test(e.message || ''))) return 'Die Sicherung lässt sich mit diesem Code nicht öffnen.';
+  return 'Server nicht erreichbar. Ist Internet da?';
+}
+
+async function hqConnect() {
+  const inp = $('#hq-code'), btn = $('#hq-go'), msg = $('#hq-state');
+  if (!inp || !btn || btn.disabled || !SYNC) return;
+  if (!inp.value.trim()) { shake(inp); return; }
+  inp.blur();
+  btn.disabled = true;
+  btn.textContent = 'Verbinde …';
+  const r = await SYNC.verbinden(inp.value);
+  if (!r.ok) {
+    if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Verbinden'; msg.hidden = false; msg.textContent = r.fehler; shake(inp); }
+    return;
+  }
+  toast('Verbunden ✓');
+  if (screen === 'settings') settings();
+  await hqOfferRestore();
+  hqReport(true);   // erst danach melden: ein neues, leeres Gerät soll den Eltern nicht „0 gelernt“ zeigen
+}
+
+// Neues Gerät: Liegt auf dem Server schon mehr Fortschritt, gleich anbieten – sonst würde die erste Runde
+// hier die gute Sicherung überschreiben.
+async function hqOfferRestore() {
+  let d = null;
+  await hqQueue(async () => { try { d = await SYNC.holen(); } catch (e) { /* keine Sicherung oder offline */ } });
+  if (geoStand(d) && Object.keys(d.stand.it).length > Object.keys(S.it).length && !SES) await hqRestoreAsk(d);
+}
+
+async function hqRestore() {
+  if (!hqOn()) return;
+  toast('Sicherung wird geholt …');
+  let d = null, err = null;
+  await hqQueue(async () => { try { d = await SYNC.holen(); } catch (e) { err = e; } });
+  if (!d) { toast(hqFail(err)); return; }
+  if (!geoStand(d)) { toast('Diese Sicherung passt nicht zu Geo Legends.'); return; }
+  hqRestoreAsk(d);
+}
+
+// Rückfrage wie beim Code-Import, mit Datum und Umfang der Sicherung
+async function hqRestoreAsk(d) {
+  const there = Object.keys(d.stand.it).length, here = Object.keys(S.it).length;
+  const v = await sheet(`<h2 class="sheet-title">Aus Sicherung holen?</h2>
+    <p>Sicherung${isDay(d.tag) ? ' vom ' + esc(niceDate(d.tag)) : ''}: ${there} Aufgaben gelernt. Auf diesem Gerät: ${here}.</p>
+    <p>Achtung: Das ersetzt den Fortschritt auf diesem Gerät.</p>`,
+    [{ label: 'Wiederherstellen', value: 'go', cls: 'go' }, { label: 'Abbrechen', value: null }]);
+  if (v !== 'go' || SES) return;
+  S = upgrade(d.stand);
+  filledFor = '';   // ausgelassene Tage seit der Sicherung nachtragen
+  save();
+  toast('Fortschritt wiederhergestellt ✓');
+  home();
+}
+
+async function hqOff() {
+  const v = await sheet(`<h2 class="sheet-title">Verbindung trennen?</h2>
+    <p>Mama und Papa sehen dann nicht mehr, ob du im Plan bist. Zum Verbinden braucht es wieder den Code.</p>`,
+    [{ label: 'Verbunden lassen', value: null, cls: 'go' }, { label: 'Trennen', value: 'off' }]);
+  if (v !== 'off') return;
+  // In der Warteschlange: Eine laufende Meldung würde sonst den alten Code wieder hineinschreiben
+  await hqQueue(() => SYNC.trennen());
+  toast('Verbindung getrennt.');
+  if (screen === 'settings') settings();
+}
+
 async function resetAll() {
   const v = await sheet(`<h2 class="sheet-title">Fortschritt löschen?</h2><p>Alle Stempel, XP und der Streak gehen verloren. Name, Testdatum und Länderauswahl bleiben.</p>`,
     [{ label: 'Ja, alles löschen', value: 'yes', cls: 'danger' }, { label: 'Abbrechen', value: null, cls: 'go' }]);
@@ -2278,9 +2611,12 @@ const ACT = {
   idk: () => idk(),
   listDone: () => finishList(),
   choice: b => onChoice(b),
-  clearTest: () => { S.settings.testDate = ''; save(); settings(); },
+  clearTest: () => { S.settings.testDate = ''; S.settings.testSeit = ''; save(); settings(); },
   exportCode: () => exportCode(),
   importCode: () => importCode(),
+  hqConnect: () => hqConnect(),
+  hqRestore: () => hqRestore(),
+  hqOff: () => hqOff(),
   reset: () => resetAll(),
   hideInstall: () => { S.ui.hideInstall = true; save(); home(); }
 };
@@ -2297,15 +2633,21 @@ app.addEventListener('mousedown', e => { if (e.target.closest('.keepfocus')) e.p
 document.addEventListener('gesturestart', e => { if (e.target.closest && e.target.closest('.mapbox')) e.preventDefault(); });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && screen === 'home') home();
+  if (document.visibilityState !== 'visible') return;
+  if (screen === 'home') home();
+  hqReport();
 });
 
 // Nur zum Testen am Mac: GL.shiftDays(1) springt einen Tag weiter
 window.GL = {
   get state() { return S; },
   today,
+  version: VERSION,
   items: ITEMS,
   check: (id, input, m) => check(IT[id], input, m || 'name'),
+  bericht: () => (LS ? lagebericht() : null),             // Lagebericht wie er an Legends HQ geht
+  urteil: () => (LS ? LS.urteil(lagebericht(), today()) : null),
+  eingabe: () => berichtEingabe(),
   get ses() { return SES && { cur: SES.cur, phase: SES.phase, item: SES.cur && IT[SES.cur.id], left: SES.queue.length }; },
   get map() { return E.map; },
   shiftDays(n) {
@@ -2319,11 +2661,27 @@ window.GL = {
 // ================================================================
 // Start
 // ================================================================
+if (SYNC) SYNC.configure({ app: 'gl' });
 syncViewport();
 if (S.ui.onboarded) home(); else welcome();
+hqReport(true);   // nach dem Start melden (nur mit Verbindung, im Hintergrund)
 
-if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !/nosw/.test(location.search)) {   // ?nosw zum Entwickeln
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+// Offline-Cache (?nosw zum Entwickeln: dann keine Registrierung)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !/nosw/.test(location.search)) {
+  const sw = navigator.serviceWorker;
+  const hadController = !!sw.controller;
+  addEventListener('load', () => sw.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    // iOS holt Web-Apps oft nur aus dem Hintergrund zurück, ohne sie neu zu starten – dann selbst nach Updates schauen
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {}));
+  // Neue Version übernommen: sofort neu laden, wenn man auf der Startseite ist – nie mitten in einer Runde
+  sw.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    updateReady = true;
+    if (screen === 'home') location.reload();
+  });
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 })();

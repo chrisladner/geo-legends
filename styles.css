@@ -222,6 +222,49 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 }
 .stamp.new { background: var(--back); color: #fff; font: 400 30px/1 var(--display); text-shadow: 0 2px 0 var(--ink); outline-color: rgba(255, 255, 255, .5); }
 
+/* Plan-Karte: dieselbe Ampel wie bei Mama und Papa, im Ton fürs Kind – kein Rot, keine Minuten, keine XP */
+.plan { display: grid; gap: 14px; padding: 16px; }
+.plan.tone-ok { --plan: var(--lime); }
+.plan.tone-catch { --plan: var(--sun); }
+.plan.tone-sos { --plan: var(--t1); }   /* Notfallplan: warmes Bronze, bewusst kein Rot */
+.plan-head { display: grid; grid-template-columns: 54px 1fr; gap: 12px; align-items: center; }
+.plan-badge {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--plan, var(--lime));
+  box-shadow: 0 4px 0 var(--ink);
+  font-size: 27px;
+  outline: 2px dashed rgba(15, 42, 61, .35);
+  outline-offset: -9px;
+}
+.plan-title { display: block; font: 400 25px/1.05 var(--display); letter-spacing: .01em; }
+.plan-text { margin-top: 3px !important; font: 700 15px/1.35 var(--body); }
+.plan-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.pday { display: grid; justify-items: center; gap: 5px; font: 800 12px/1 var(--body); color: var(--muted); }
+.pday i {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: #fff;
+  font: 400 16px/1 var(--display);
+  font-style: normal;
+  color: var(--ink);
+}
+.pday.fertig i { background: var(--lime); box-shadow: 0 3px 0 var(--ink); }
+.pday.teil i { background: linear-gradient(90deg, var(--sun) 50%, #fff 50%); }
+.pday.aus i { background: var(--mist); border-color: #8FA7B1; }
+.pday.frei i { width: 14px; height: 14px; margin: 8px 0; border-width: 2.5px; background: var(--mist); }
+.pday.offen i { border-style: dashed; }
+.pday.today { color: var(--ink); }
+.plan-note { text-align: center; font: 700 12.5px/1.3 var(--body); color: var(--muted); }
+
 .install { background: var(--sun); display: grid; gap: 6px; box-shadow: 0 5px 0 var(--ink); }
 .install p { font-weight: 700; }
 .install .link { justify-self: start; }
@@ -832,6 +875,15 @@ body.kb .ses-fb { max-height: 26vh; }
 .field .btn { font-size: 17px; text-transform: none; letter-spacing: 0; }
 .daterow { display: flex; align-items: center; gap: 12px; }
 .daterow input { flex: 1; }
+.daterow input:disabled { opacity: 1; color: var(--ink); background: var(--mist); -webkit-text-fill-color: var(--ink); }
+.field small .locked { color: var(--ink); font-weight: 800; }
+
+/* Eltern-Verbindung */
+.hq { gap: 14px; }
+.hq input[type=text] { font: 600 16px/1.2 var(--mono); }   /* unter 16px zoomt iOS beim Antippen hinein */
+.hq-state { font: 800 14px/1.35 var(--body); color: var(--ink); overflow-wrap: anywhere; }
+.hq-state small { display: block; margin-top: 4px; font: 600 13.5px/1.35 var(--body); color: var(--muted); }
+.hq-btns .btn { font-size: 16px; text-transform: none; letter-spacing: 0; padding: 13px 8px 11px; }
 .toggle { position: relative; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; cursor: pointer; }
 .toggle b { display: block; font: 800 15px/1.25 var(--body); }
 .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
