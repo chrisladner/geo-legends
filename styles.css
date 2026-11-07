@@ -227,6 +227,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 .plan.tone-ok { --plan: var(--lime); }
 .plan.tone-catch { --plan: var(--sun); }
 .plan.tone-sos { --plan: var(--t1); }   /* Notfallplan: warmes Bronze, bewusst kein Rot */
+.plan.tone-calm { --plan: var(--mist); }   /* Kein Termin: keine Ampel, weder grün noch Alarm */
 .plan-head { display: grid; grid-template-columns: 54px 1fr; gap: 12px; align-items: center; }
 .plan-badge {
   width: 54px;

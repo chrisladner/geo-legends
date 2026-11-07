@@ -16,7 +16,7 @@ const SYNC = window.LegendsSync || null;
 // ================================================================
 // Konstanten
 // ================================================================
-const VERSION = 'gl-v2';   // wie in sw.js – beide zusammen hochzählen
+const VERSION = 'gl-v3';   // wie in sw.js – beide zusammen hochzählen
 const STORE_KEY = 'geolegends.v1';
 const INTERVALS = [0, 1, 1, 2, 4];   // Tage Pause nach Erreichen der Stufe 1–4
 const DIAMOND_INTERVAL = 7;          // Diamant und wieder richtig
@@ -1386,7 +1386,8 @@ function planCard() {
   const practiced = (e.a || 0) + (e.n || 0) > 0;
   const days = b.tage.slice(-6).map(t => ({ d: t.d, s: t.s }));
   days.push({ d: today(), s: b.heute.fertig ? (practiced ? 'fertig' : 'frei') : (practiced ? 'teil' : 'offen'), heute: true });
-  const tone = u.stufe === 'rot' ? 'tone-sos' : u.stufe === 'gelb' ? 'tone-catch' : 'tone-ok';
+  // Ohne Termin (pause) oder ohne Bericht (unbekannt) gibt es keine Ampel: neutral grau, nicht grün
+  const tone = { rot: 'tone-sos', gelb: 'tone-catch', gruen: 'tone-ok' }[u.stufe] || 'tone-calm';
   return `<div class="panel plan ${tone}">
     <div class="plan-head"><span class="plan-badge" aria-hidden="true">🧭</span>
       <div><b class="plan-title">${esc(u.kind.titel)}</b><p class="plan-text">${esc(u.kind.text)}</p></div></div>

@@ -3,9 +3,10 @@
    hier ändern, dann `node tools/verteilen.mjs`.
 
    Rechnet aus dem Stand einer App einen kleinen Lagebericht (nur Zahlen, kein Name) und daraus die
-   Ampel: Ist das Kind für den nächsten Test im Plan? Format und Regeln: docs/schnittstelle.md,
-   fachliche Grundlage: auftraege/2026-11-06_eltern-hub.md. Klassisches Skript ohne Abhängigkeiten,
-   hängt sich an globalThis.LegendsStatus (Browser, Worker, node). */
+   Ampel: Ist das Kind für den nächsten Test im Plan? Ohne Termin gibt es keine Ampel, nur „Pause“.
+   Format und Regeln: docs/schnittstelle.md, fachliche Grundlage: auftraege/2026-11-06_eltern-hub.md
+   (Vorwissen und Minuten-Schwellen je App: auftraege/2026-11-07_deutsch-app/bauauftrag.md, Abschnitt 7).
+   Klassisches Skript ohne Abhängigkeiten, hängt sich an globalThis.LegendsStatus (Browser, Worker, node). */
 (function (root) {
   'use strict';
 
@@ -18,9 +19,14 @@
   const P_PLAN = 0.85;
 
   // paket: Neues kommt in ganzen Paketen (Geo: Länder einer Region); 1 = einzeln
+  // vorwissen: Anteil neuer Karten, die das Kind schon kann (Blitz-Check in Spell Legends). Sie starten auf
+  //   gekonntStufe, ruhen bis nach dem Test und kosten sekVortest statt sekNeu. 0 = aus (Word, Geo).
+  // minGelb, minRot: Minuten am Tag, ab denen die Ampel gelb bzw. rot zeigt (streng „über“). Weicht eine App
+  //   davon ab, steht das als b.schwellen im Bericht, damit Eltern-App und Server dasselbe rechnen.
   const STANDARD = {
     pausen: [0, 1, 2, 4, 7, 14, 30], maxPause: 60, maxStufe: 6, sicherAb: 3, fehlerMinus: 2,
-    neuProTag: 8, vorlauf: 1, wdhLimit: 0, paket: 1, sekNeu: 30, sekWdh: 8, sekFehler: 23
+    neuProTag: 8, vorlauf: 1, wdhLimit: 0, paket: 1, sekNeu: 30, sekWdh: 8, sekFehler: 23,
+    vorwissen: 0, gekonntStufe: 3, sekVortest: 10, minGelb: 20, minRot: 25
   };
 
   // ================================================================
@@ -77,11 +83,83 @@
   }
 
   // ================================================================
+  // Neue Regeln prüfen: Fehlt ein Wert oder ist er Unsinn, gilt der Standard – die Rechnung bricht nie ab
+  // ================================================================
+  function zahlIn(x, min, max) { return typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max; }
+  function vorwissenVon(R) {
+    const v = Number(R.vorwissen);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+  }
+  function gekonntVon(R) {
+    const s = Math.round(Number(R.gekonntStufe));
+    return Number.isFinite(s) ? Math.max(1, Math.min(R.maxStufe, s)) : STANDARD.gekonntStufe;
+  }
+  function sekVortestVon(R) { return zahlIn(R.sekVortest, 0, 600) ? R.sekVortest : STANDARD.sekVortest; }
+  // Sekunden für eine neue Karte im Mittel: Gekonntes ist mit einer Frage erledigt. Ohne Vorwissen genau sekNeu.
+  function sekNeuMittel(R) {
+    const vw = vorwissenVon(R);
+    return vw > 0 ? (1 - vw) * R.sekNeu + vw * sekVortestVon(R) : R.sekNeu;
+  }
+  // Minuten-Schwellen der Ampel: Zahlen über 0 (höchstens 240), rot nie unter gelb; sonst der Standard 20/25
+  function schwellenAus(gelb, rot) {
+    const g = zahlIn(gelb, 0.5, 240) ? gelb : STANDARD.minGelb;
+    const r = zahlIn(rot, 0.5, 240) ? rot : STANDARD.minRot;
+    return { gelb: g, rot: Math.max(g, r) };
+  }
+
+  // Fortschritt der Ziel-Karte (Spell Legends), nur zum Anzeigen in der Eltern-App: bekannte Felder, nur Zahlen,
+  // Wahrheitswerte und kurze Titel, Größe begrenzt (höchstens etwa 700 Zeichen). Was nicht passt, fällt weg.
+  // Zählt nicht für die Ampel.
+  const F_BALKEN = 6, F_TITEL = 32;
+  function prozentVon(x) { return typeof x === 'number' && Number.isFinite(x) ? Math.floor(Math.max(0, Math.min(100, x))) : null; }
+  function zahlenVon(q, felder, max) {
+    if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
+    const o = {};
+    for (const f of felder) if (typeof q[f] === 'number' && Number.isFinite(q[f])) o[f] = Math.round(Math.max(0, Math.min(max, q[f])));
+    return Object.keys(o).length ? o : null;
+  }
+  function fortschrittAus(f) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+    const o = {};
+    const p = prozentVon(f.prozent);
+    if (p !== null) o.prozent = p;   // abgerundet wie auf der Ziel-Karte: 94,9 ist noch nicht bereit
+    if (typeof f.bereit === 'boolean') o.bereit = f.bereit;
+    if (typeof f.perfekt === 'boolean') o.perfekt = f.perfekt;
+    if (Array.isArray(f.balken)) {
+      const balken = [];
+      for (const x of f.balken) {
+        if (balken.length >= F_BALKEN) break;
+        const bp = x && typeof x === 'object' ? prozentVon(x.prozent) : null;
+        if (bp === null) continue;
+        const z = {};
+        if (typeof x.id === 'string' && /^[a-z0-9-]{1,16}$/.test(x.id)) z.id = x.id;
+        // Titel nach Zeichen (nicht UTF-16-Einheiten) kürzen und Steuerzeichen weglassen: Ein halbiertes Emoji
+        // oder \u0000 würde im JSON zu sechs Zeichen und könnte den Bericht über die Grenze des Servers heben.
+        const titel = typeof x.titel === 'string' ? Array.from(x.titel.replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, F_TITEL).join('') : '';
+        if (titel) z.titel = titel;
+        z.prozent = bp;
+        balken.push(z);
+      }
+      if (balken.length) o.balken = balken;
+    }
+    const schreiben = zahlenVon(f.schreiben, ['geschrieben', 'hergezeigt', 'voll'], 99);
+    if (schreiben) o.schreiben = schreiben;
+    const check = zahlenVon(f.check, ['gefragt', 'gewusst'], 9999);
+    if (check) o.check = check;
+    return Object.keys(o).length ? o : null;
+  }
+
+  // ================================================================
   // Vorwärts-Simulation des App-Plans bis zum Vortag des Tests.
   // Das Kind macht nach `pause` Tagen ohne Üben jeden Tag die Runde und liegt mit p richtig.
   // Ergebnis: Anteil sicherer Karten im Ziel am Testtag (%) und nötige Minuten pro Tag.
   // heuteNeu: wie viel Neues die App heute noch verlangt (Tag 0 einer Prognose ab jetzt); ohne Angabe
   // rechnet Tag 0 die volle Tagesmenge (Plan ab dem Eintragetag).
+  // Vorwissen (regeln.vorwissen > 0, Spell Legends): Gekonntes ruht bis nach dem Test, ohne Kappe auf den Vortag.
+  // Das gilt für den Anteil vorwissen der neuen Karten und für schon gesammelte Karten, die die App selbst erst
+  // nach dem Test einplant (due nach dem Vortag, z. B. Stern aus dem Blitz-Check). Sonst holte die Prognose jeden
+  // Stern am Vortag noch einmal zurück – mit Zeit und Fehlern, die es in der App nicht gibt. Ohne Vorwissen (Word,
+  // Geo) zieht die Simulation keine einzige Zufallszahl mehr als bisher: Die Ergebnisse bleiben bitgleich.
   // ================================================================
   function simuliere(eingabe, pause, p, laeufe, heuteNeu) {
     const R = Object.assign({}, STANDARD, eingabe.regeln || {});
@@ -90,12 +168,14 @@
     if (tage < 1) return null;
     const vortag = addDays(T, -1);
     const kappe = (tag, due) => (due > vortag && tag < vortag ? vortag : due);   // Endspurt: am Vortag noch einmal
+    const vw = vorwissenVon(R);
+    const gekonnt = gekonntVon(R), sekVortest = sekVortestVon(R), nachTest = addDays(T, 1);
     const basis = (eingabe.karten || []).filter(k => k.imZiel);
     const neuStart = (eingabe.neuOffen && eingabe.neuOffen.ziel) || 0;
     const rnd = zufall(streuwert(heute + '|' + eingabe.app + '|' + pause + '|' + basis.length + '|' + neuStart));
     let summeSicher = 0, summeMin = 0;
     for (let l = 0; l < laeufe; l++) {
-      const karten = basis.map(k => ({ lv: k.lv, due: kappe(heute, k.due) }));
+      const karten = basis.map(k => ({ lv: k.lv, due: vw > 0 && k.due > vortag ? k.due : kappe(heute, k.due) }));
       let neu = neuStart;
       const minuten = [];
       for (let d = 0; d < tage; d++) {
@@ -130,9 +210,19 @@
             if (R.paket > 1) q = Math.ceil(q / R.paket) * R.paket;
             q = Math.min(neu, q);
           }
-          for (let i = 0; i < q; i++) karten.push({ lv: 1, due: kappe(tag, addDays(tag, R.pausen[1] || 1)) });
+          // Vorwissen: Was das Kind schon kann, startet auf gekonnt und ruht bis nach dem Test (eine Frage genügt).
+          // Die Zufallszahl dafür wird nur mit Vorwissen gezogen.
+          let schonGekonnt = 0;
+          for (let i = 0; i < q; i++) {
+            if (vw > 0 && rnd() < vw) {
+              karten.push({ lv: gekonnt, due: nachTest });
+              schonGekonnt++;
+            } else {
+              karten.push({ lv: 1, due: kappe(tag, addDays(tag, R.pausen[1] || 1)) });
+            }
+          }
           neu -= q;
-          s += q * R.sekNeu;
+          s += schonGekonnt ? (q - schonGekonnt) * R.sekNeu + schonGekonnt * sekVortest : q * R.sekNeu;
         }
         minuten.push(s / 60);
       }
@@ -260,7 +350,7 @@
       .slice(0, 8)
       .map(k => String(k.label).slice(0, 60));
 
-    return {
+    const b = {
       v: FORMAT,
       app: e.app, name: e.name, version: e.version || '',
       tag: heute, zeit: e.zeit || '',
@@ -272,17 +362,25 @@
       letzteRunde,
       tage,
       quote7,
-      offenMin: Math.round((offen.faellig * R.sekWdh + offen.neu * R.sekNeu) / 60),
+      offenMin: Math.round((offen.faellig * R.sekWdh + offen.neu * sekNeuMittel(R)) / 60),
       faellig14,
       neuGeplant: !!(test && neuZiel > 0),
       sek: { neu: R.sekNeu, wdh: R.sekWdh },
       prognose,
       wackelig
     };
+    // Nur was vom Standard abweicht, kommt dazu: Berichte von Word und Geo bleiben Byte für Byte wie bisher
+    const sw = schwellenAus(R.minGelb, R.minRot);
+    if (sw.gelb !== STANDARD.minGelb || sw.rot !== STANDARD.minRot) b.schwellen = sw;
+    const fortschritt = fortschrittAus(e.fortschritt);
+    if (fortschritt) b.fortschritt = fortschritt;
+    return b;
   }
 
   // ================================================================
-  // Ampel – reine Funktion: dieselbe Antwort in der App, in der Eltern-App und im Worker
+  // Ampel – reine Funktion: dieselbe Antwort in der App, in der Eltern-App und im Worker.
+  // Stufen: gruen · gelb · rot (mit Test) · pause (ohne kommenden Test) · unbekannt (noch keine Meldung).
+  // Gründe haben die Stufe gelb oder rot, ohne Test nur „info“ (zählt nicht).
   // ================================================================
   const RANG = { gruen: 0, gelb: 1, rot: 2 };
 
@@ -333,6 +431,8 @@
     let heuteOffen = false;
     if (opt.abend) heuteOffen = alter === 0 ? nichtFertigAmBerichtstag : zuTun(alter);
 
+    // Minuten-Schwellen der App (b.schwellen, z. B. Spell Legends 25/30), sonst 20/25
+    const sw = schwellenAus(b.schwellen && b.schwellen.gelb, b.schwellen && b.schwellen.rot);
     let verpasst, prognose = null, minuten = null, plan = null, abstand = null;
     if (test) {
       verpasst = verpasstIn(7, true);
@@ -350,39 +450,40 @@
           if (abstand >= 20) grund('rot', `${abstand} Prozentpunkte hinter dem Plan (Prognose ${prognose} %, Plan ${plan.sicher} %)`);
           else if (abstand >= 10) grund('gelb', `${abstand} Prozentpunkte hinter dem Plan (Prognose ${prognose} %, Plan ${plan.sicher} %)`);
           // Pläne, die sich auch mit täglichem Üben nicht ausgehen (GW im Oktober)
-          if (plan.sicher < 50 || plan.minuten > 25) grund('rot', `Der Plan geht sich nicht aus: auch mit täglichem Üben nur ${plan.sicher} % sicher, ${plan.minuten} Minuten am Tag`);
-          else if (plan.sicher < 65 || plan.minuten > 20) grund('gelb', `Der Plan ist knapp: mit täglichem Üben ${plan.sicher} % sicher, ${plan.minuten} Minuten am Tag`);
+          if (plan.sicher < 50 || plan.minuten > sw.rot) grund('rot', `Der Plan geht sich nicht aus: auch mit täglichem Üben nur ${plan.sicher} % sicher, ${plan.minuten} Minuten am Tag`);
+          else if (plan.sicher < 65 || plan.minuten > sw.gelb) grund('gelb', `Der Plan ist knapp: mit täglichem Üben ${plan.sicher} % sicher, ${plan.minuten} Minuten am Tag`);
         }
         if (testIn >= 3) {
-          if (minuten > 25) grund('rot', `braucht ${minuten} Minuten pro Tag, um es zu schaffen`);
-          else if (minuten > 20) grund('gelb', `braucht ${minuten} Minuten pro Tag`);
+          if (minuten > sw.rot) grund('rot', `braucht ${minuten} Minuten pro Tag, um es zu schaffen`);
+          else if (minuten > sw.gelb) grund('gelb', `braucht ${minuten} Minuten pro Tag`);
         }
       }
       if (endspurt && heuteOffen) grund('gelb', 'heute noch keine fertige Runde');
       if (alter >= 3) grund('rot', `seit ${alter} Tagen keine Meldung`);
       else if (alter === 2) grund('gelb', 'seit 2 Tagen keine Meldung');
     } else {
+      // Ohne Termin keine Ampel (Christian, 07.11.2026): Stufe „pause“, nie gelb oder rot, keine Nachricht.
+      // Was die früheren Regeln finden, bleibt als Hinweis sichtbar (Stufe „info“, gleiche Schwellen wie damals gelb).
       verpasst = verpasstIn(14, false);
-      if (verpasst >= 7) grund('rot', `${verpasst} Tage in den letzten 2 Wochen nicht geübt, obwohl etwas fällig war`);
-      else if (verpasst >= 3) grund('gelb', `${verpasst} Tage in den letzten 2 Wochen nicht geübt, obwohl etwas fällig war`);
+      if (verpasst >= 3) grund('info', `${verpasst} Tage in den letzten 2 Wochen nicht geübt, obwohl etwas fällig war`);
       const sekWdh = (b.sek && b.sek.wdh) || STANDARD.sekWdh;
       const offenJetzt = alter === 0 ? (b.offenMin || 0)
         : Math.max(b.offenMin || 0, Math.round((f14[Math.min(alter, f14.length - 1)] || 0) * sekWdh / 60));
-      if (offenJetzt > 30) grund('rot', `${offenJetzt} Minuten Wiederholung liegen offen`);
-      else if (offenJetzt > 15) grund('gelb', `${offenJetzt} Minuten Wiederholung liegen offen`);
+      if (offenJetzt > 15) grund('info', `${offenJetzt} Minuten Wiederholung liegen offen`);
     }
     if (b.quote7 != null) {
       const q = Math.round(b.quote7 * 100);
-      if (q < 65) grund('rot', `Trefferquote nur ${q} % (rät er?)`);
-      else if (q < 75) grund('gelb', `Trefferquote ${q} %`);
+      if (q < 65) grund(test ? 'rot' : 'info', `Trefferquote nur ${q} % (rät er?)`);
+      else if (q < 75) grund(test ? 'gelb' : 'info', `Trefferquote ${q} %`);
     }
 
     let stufe = 'gruen';
     for (const g of gruende) if (RANG[g.stufe] > RANG[stufe]) stufe = g.stufe;
+    if (!test) stufe = 'pause';
 
     return {
       stufe, gruende, alter, testIn, endspurt, heuteOffen, verpasst, prognose, minuten, plan, abstand,
-      kind: textKind(stufe, b, test, testIn, gruende),
+      kind: textKind(stufe, b, test, testIn, gruende, alter),
       eltern: textEltern(stufe, b, test, testIn, gruende, alter)
     };
   }
@@ -397,7 +498,14 @@
 
   // Das Kind sieht dieselbe Stufe wie die Eltern, in seinem Ton und ohne Rot. Hat es heute schon alles
   // erledigt, zählt zuerst das: Anerkennung für heute und der Blick nach vorn. „Mission“ = alle Runden des Tages.
-  function textKind(stufe, b, test, testIn, gruende) {
+  function textKind(stufe, b, test, testIn, gruende, alter) {
+    if (stufe === 'pause') {
+      // Kein Termin, kein Druck. „Runde geschafft“ nur, wenn heute wirklich geübt und fertig wurde.
+      const geschafft = alter === 0 && !!b.letzteRunde && b.letzteRunde === b.tag;
+      return { titel: 'Kein Termin', text: geschafft
+        ? 'Runde geschafft ✓ Gerade steht kein Test an – so bleibt alles frisch.'
+        : 'Gerade steht kein Test an. Eine kurze Runde hält alles frisch.' };
+    }
     const fertig = b.heute && b.heute.fertig;
     if (stufe === 'rot') {
       return fertig
@@ -420,6 +528,8 @@
     const wann = alter === 0 ? `Gemeldet heute ${b.zeit || ''}`.trim() : alter === 1 ? 'Zuletzt gemeldet gestern' : `Zuletzt gemeldet vor ${alter} Tagen`;
     const teile = [bisTest(test, testIn), stand ? stand + '.' : '', wann + '.'].filter(Boolean);
     if (stufe === 'gruen') return { titel: 'Im Plan', text: teile.join(' '), tipp: '' };
+    // Ohne Termin: nichts zu tun. Die Hinweise (Stufe „info“) zeigt die Eltern-App grau unter dem Titel.
+    if (stufe === 'pause') return { titel: 'Pause – kein Termin', text: teile.join(' '), tipp: '' };
     const warum = gruende.filter(g => g.stufe === stufe).map(g => g.text).join(' · ');
     if (stufe === 'gelb') {
       return { titel: 'Aufholen nötig', text: warum + '. ' + teile.join(' '),

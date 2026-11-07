@@ -49,7 +49,7 @@ Alles steht in `data.js` (Format oben in der Datei). ids nie ändern – der For
   zählt der Tag, an dem die App den Termin zuerst sieht) und optional `testTitle` (sonst „GW-Test“).
   Bis gl-v1 wurde der Termin in den Speicher kopiert, darum kam ein neuer Termin nie an; der alte Wert wird
   beim Laden verworfen.
-- Danach `sw.js` → `VERSION` **und** `app.js` → `VERSION` hochzählen (Stand `gl-v2`) und neu veröffentlichen.
+- Danach `sw.js` → `VERSION` **und** `app.js` → `VERSION` hochzählen (Stand `gl-v3`) und neu veröffentlichen.
 
 So kommt ein Update aufs iPhone (seit `gl-v2`, wie Word Legends seit `wl-v5`): Mit Internet holt der
 Offline-Cache die App-Dateien immer frisch vom Server (höchstens 2,5 s warten, sonst Cache). Ein neuer
@@ -61,10 +61,10 @@ Caches (`gl-…`), denn Word Legends liegt unter derselben Adresse.
 
 ## Eltern-Verbindung und Plan-Karte
 
-Stand `gl-v2`. Vertrag: `legends-hq/docs/schnittstelle.md`. `legends-status.js` und `legends-sync.js` sind Kopien
+Stand `gl-v3`. Vertrag: `legends-hq/docs/schnittstelle.md`. `legends-status.js` und `legends-sync.js` sind Kopien
 aus `legends-hq/shared/` – nie hier ändern, sondern dort und dann `node tools/verteilen.mjs`.
 
-- **Plan-Karte** auf der Startseite: dieselbe Ampel wie bei den Eltern, im Ton fürs Kind (Im Plan ✓ · Aufholen ·
+- **Plan-Karte** auf der Startseite: dieselbe Ampel wie bei den Eltern, im Ton fürs Kind (ohne Termin seit `gl-v3` grau „Kein Termin“; sonst Im Plan ✓ · Aufholen ·
   Notfallplan), dazu die letzten 7 Tage als Punkte (✓ geschafft · halb = angefangen · leer = nicht geübt ·
   klein = frei · gestrichelt = heute noch offen) und „Das sehen Mama und Papa auch.“ Kein Rot, keine Minuten,
   keine XP. Rechnet auch ohne Verbindung, neu nur, wenn sich Stand oder Tag geändert haben.
