@@ -108,7 +108,7 @@
   }
 
   // Fortschritt der Ziel-Karte (Spell Legends), nur zum Anzeigen in der Eltern-App: bekannte Felder, nur Zahlen,
-  // Wahrheitswerte und kurze Titel, Größe begrenzt (höchstens etwa 700 Zeichen). Was nicht passt, fällt weg.
+  // Wahrheitswerte und kurze Titel, Größe begrenzt (höchstens etwa 750 Zeichen). Was nicht passt, fällt weg.
   // Zählt nicht für die Ampel.
   const F_BALKEN = 6, F_TITEL = 32;
   function prozentVon(x) { return typeof x === 'number' && Number.isFinite(x) ? Math.floor(Math.max(0, Math.min(100, x))) : null; }
@@ -142,8 +142,14 @@
       }
       if (balken.length) o.balken = balken;
     }
-    const schreiben = zahlenVon(f.schreiben, ['geschrieben', 'hergezeigt', 'voll'], 99);
-    if (schreiben) o.schreiben = schreiben;
+    // Schreiben auf Papier: Zähler, dazu seit dl-v5 der Stand von heute, damit die Eltern-App sagen kann, was von der
+    // Mission noch fehlt: offen (0/1: Schreibauftrag heute noch offen, steckt schon in heute.neu), erledigt (0/1: heute
+    // einer selbst geprüft) und herzeigen (Texte, die aufs Herzeigen warten). Word und Geo schicken nichts davon.
+    const schreiben = zahlenVon(f.schreiben, ['geschrieben', 'hergezeigt', 'voll', 'offen', 'erledigt', 'herzeigen'], 99);
+    if (schreiben) {
+      for (const k of ['offen', 'erledigt']) if (k in schreiben) schreiben[k] = Math.min(1, schreiben[k]);
+      o.schreiben = schreiben;
+    }
     const check = zahlenVon(f.check, ['gefragt', 'gewusst'], 9999);
     if (check) o.check = check;
     return Object.keys(o).length ? o : null;
@@ -381,8 +387,13 @@
   // Ampel – reine Funktion: dieselbe Antwort in der App, in der Eltern-App und im Worker.
   // Stufen: gruen · gelb · rot (mit Test) · pause (ohne kommenden Test) · unbekannt (noch keine Meldung).
   // Gründe haben die Stufe gelb oder rot, ohne Test nur „info“ (zählt nicht).
+  // „Mission“ = alles, was die App für den Tag stellt (Word, Geo: alle Runden des Tages; Spell: die Runde und an
+  // Schreibtagen den Schreibauftrag). „Runde“ heißt nur eine einzelne Runde (Projektleitung, 08.11.2026).
   // ================================================================
   const RANG = { gruen: 0, gelb: 1, rot: 2 };
+  // Abend-Grund im Endspurt. Der Worker erkennt ihn an diesem Text und schreibt in die Abendnachricht, was noch
+  // fehlt („Spell: Heute noch offen – Schreibauftrag auf Papier, …“).
+  const HEUTE_OFFEN = 'Mission heute noch offen';
 
   function urteil(b, heute, opt) {
     opt = opt || {};
@@ -407,13 +418,13 @@
     const zuTun = i => ((f14[Math.min(i, f14.length - 1)] || 0) > 0) || !!b.neuGeplant;
     const nichtFertigAmBerichtstag = !heuteB.fertig && (heuteB.faellig + heuteB.neu) > 0;
 
-    // Lücken zählen nur seit der letzten fertigen Runde: Wer aufholt, ist wieder im Plan – auch am nächsten Morgen.
-    // Den Rückstand im Stoff misst die Prognose gegen den Plan.
+    // Lücken zählen nur seit der letzten fertigen Mission (Feld letzteRunde): Wer aufholt, ist wieder im Plan – auch
+    // am nächsten Morgen. Den Rückstand im Stoff misst die Prognose gegen den Plan.
     let seit = b.letzteRunde || '';
     for (const t of b.tage || []) if (t.s === 'fertig' && t.d > seit) seit = t.d;
     if (b.aufgeholt && b.tag > seit) seit = b.tag;
 
-    // Tage ohne fertige Runde in einem Fenster vor heute (nach der letzten fertigen Runde), dazu Tage ohne Meldung
+    // Tage ohne fertige Mission in einem Fenster vor heute (nach der letzten fertigen), dazu Tage ohne Meldung
     function verpasstIn(fensterTage, auchTeil) {
       const ab = addDays(heute, -fensterTage);
       let n = 0;
@@ -436,8 +447,8 @@
     let verpasst, prognose = null, minuten = null, plan = null, abstand = null;
     if (test) {
       verpasst = verpasstIn(7, true);
-      if (verpasst >= 3) grund('rot', `${verpasst} Runden in den letzten 7 Tagen nicht fertig`);
-      else if (verpasst >= 1) grund('gelb', `${verpasst === 1 ? '1 Runde' : verpasst + ' Runden'} in den letzten 7 Tagen nicht fertig`);
+      if (verpasst >= 3) grund('rot', `${verpasst} Missionen in den letzten 7 Tagen nicht fertig`);
+      else if (verpasst >= 1) grund('gelb', `${verpasst === 1 ? '1 Mission' : verpasst + ' Missionen'} in den letzten 7 Tagen nicht fertig`);
       if (b.prognose && testIn >= 1) {
         const k = Math.min(3, alter);
         prognose = b.prognose.sicher[k];
@@ -458,7 +469,7 @@
           else if (minuten > sw.gelb) grund('gelb', `braucht ${minuten} Minuten pro Tag`);
         }
       }
-      if (endspurt && heuteOffen) grund('gelb', 'heute noch keine fertige Runde');
+      if (endspurt && heuteOffen) grund('gelb', HEUTE_OFFEN);
       if (alter >= 3) grund('rot', `seit ${alter} Tagen keine Meldung`);
       else if (alter === 2) grund('gelb', 'seit 2 Tagen keine Meldung');
     } else {
@@ -497,13 +508,14 @@
   }
 
   // Das Kind sieht dieselbe Stufe wie die Eltern, in seinem Ton und ohne Rot. Hat es heute schon alles
-  // erledigt, zählt zuerst das: Anerkennung für heute und der Blick nach vorn. „Mission“ = alle Runden des Tages.
+  // erledigt, zählt zuerst das: Anerkennung für heute und der Blick nach vorn. „Mission“ = alles, was heute dran ist.
   function textKind(stufe, b, test, testIn, gruende, alter) {
     if (stufe === 'pause') {
-      // Kein Termin, kein Druck. „Runde geschafft“ nur, wenn heute wirklich geübt und fertig wurde.
+      // Kein Termin, kein Druck. „Mission geschafft“ nur, wenn heute wirklich geübt und fertig wurde.
+      // „Eine kurze Runde“ meint eine einzelne Runde, nicht die ganze Mission.
       const geschafft = alter === 0 && !!b.letzteRunde && b.letzteRunde === b.tag;
       return { titel: 'Kein Termin', text: geschafft
-        ? 'Runde geschafft ✓ Gerade steht kein Test an – so bleibt alles frisch.'
+        ? 'Mission geschafft ✓ Gerade steht kein Test an – so bleibt alles frisch.'
         : 'Gerade steht kein Test an. Eine kurze Runde hält alles frisch.' };
     }
     const fertig = b.heute && b.heute.fertig;
@@ -533,14 +545,14 @@
     const warum = gruende.filter(g => g.stufe === stufe).map(g => g.text).join(' · ');
     if (stufe === 'gelb') {
       return { titel: 'Aufholen nötig', text: warum + '. ' + teile.join(' '),
-        tipp: 'Freundlich fragen, wann die Runde dran ist, und eine feste Zeit ausmachen. Nur die heutige Runde.' };
+        tipp: 'Freundlich fragen, wann die Mission dran ist, und eine feste Zeit ausmachen. Nur die heutige Mission.' };
     }
     return { titel: 'Eingreifen', text: warum + '. ' + teile.join(' '),
       tipp: 'Besprechen, was ihn abhält. Dann täglich danebensitzen (Duell, Probetest), bis es wieder grün ist. Keine Strafe.' };
   }
 
   root.LegendsStatus = {
-    FORMAT, STANDARD, P_PLAN,
+    FORMAT, STANDARD, P_PLAN, HEUTE_OFFEN,
     bericht, urteil,
     eintrag, zaehleAntwort, zaehleNeu, zaehleZeit, kuerzen,
     addDays, daysBetween, simuliere

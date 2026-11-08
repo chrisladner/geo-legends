@@ -16,7 +16,7 @@ const SYNC = window.LegendsSync || null;
 // ================================================================
 // Konstanten
 // ================================================================
-const VERSION = 'gl-v3';   // wie in sw.js – beide zusammen hochzählen
+const VERSION = 'gl-v4';   // wie in sw.js – beide zusammen hochzählen
 const STORE_KEY = 'geolegends.v1';
 const INTERVALS = [0, 1, 1, 2, 4];   // Tage Pause nach Erreichen der Stufe 1–4
 const DIAMOND_INTERVAL = 7;          // Diamant und wieder richtig
