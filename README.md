@@ -64,7 +64,8 @@ Caches (`gl-…`), denn Word Legends liegt unter derselben Adresse.
 Stand `gl-v4`. Vertrag: `legends-hq/docs/schnittstelle.md`. `legends-status.js` und `legends-sync.js` sind Kopien
 aus `legends-hq/shared/` – nie hier ändern, sondern dort und dann `node tools/verteilen.mjs`. Seit `gl-v4` heißt
 der ganze Tag auch in den Texten der Ampel „Mission“ (z. B. „Mission geschafft ✓“, bei den Eltern „Mission
-fertig“); Bericht und Ampel rechnen unverändert.
+fertig“, abends im Endspurt „Heute noch offen“); Bericht und Ampel rechnen unverändert. Die Vorlese-Texte der
+Tagespunkte (`DAY_WORD`) sagen wie in Spell „Mission geschafft“ und „angefangen, Mission noch offen“.
 
 - **Plan-Karte** auf der Startseite: dieselbe Ampel wie bei den Eltern, im Ton fürs Kind (ohne Termin seit `gl-v3` grau „Kein Termin“; sonst Im Plan ✓ · Aufholen ·
   Notfallplan), dazu die letzten 7 Tage als Punkte (✓ geschafft · halb = angefangen · leer = nicht geübt ·

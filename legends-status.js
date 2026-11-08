@@ -544,6 +544,12 @@
     if (stufe === 'pause') return { titel: 'Pause – kein Termin', text: teile.join(' '), tipp: '' };
     const warum = gruende.filter(g => g.stufe === stufe).map(g => g.text).join(' · ');
     if (stufe === 'gelb') {
+      // Gelb nur, weil abends im Endspurt die Mission von heute noch offen ist: Das Kind ist nicht im Rückstand, es ist
+      // heute nur noch nicht fertig (Projektleitung, 08.11.2026). Farbe bleibt gelb, Titel wie in der Abendnachricht.
+      if (gruende.filter(g => g.stufe === 'gelb').every(g => g.text === HEUTE_OFFEN)) {
+        return { titel: 'Heute noch offen', text: warum + '. ' + teile.join(' '),
+          tipp: 'Freundlich fragen, wann der Rest dran ist. Nur heute.' };
+      }
       return { titel: 'Aufholen nötig', text: warum + '. ' + teile.join(' '),
         tipp: 'Freundlich fragen, wann die Mission dran ist, und eine feste Zeit ausmachen. Nur die heutige Mission.' };
     }

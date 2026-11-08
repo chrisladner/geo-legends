@@ -1376,7 +1376,8 @@ function home() {
 // ---------- Plan-Karte ----------
 // Dieselbe Ampel wie bei Mama und Papa, aber im Ton fürs Kind: Im Plan · Aufholen · Notfallplan.
 // Kein Rot, keine Minuten, keine XP – es geht um Können gegen den Plan. Rechnet auch ohne Verbindung.
-const DAY_WORD = { fertig: 'geschafft', teil: 'angefangen', aus: 'nicht geübt', frei: 'frei', offen: 'noch offen' };
+// Vorlese-Texte der Tagespunkte, fertig und teil gleich wie in Spell (Mission = der ganze Tag, Projektleitung 08.11.2026)
+const DAY_WORD = { fertig: 'Mission geschafft', teil: 'angefangen, Mission noch offen', aus: 'nicht geübt', frei: 'frei', offen: 'noch offen' };
 function planCard() {
   if (!LS) return '';
   let b, u;
