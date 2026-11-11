@@ -2,7 +2,7 @@
    App-Dateien: mit Internet immer frisch vom Server (höchstens 2,5 s warten), ohne Internet aus dem Cache.
    Schrift von Google Fonts: einmal laden, dann aus dem Cache.
    VERSION zusammen mit VERSION in app.js hochzählen. */
-const VERSION = 'gl-v4';
+const VERSION = 'gl-v5';
 const FONT_CACHE = 'gl-fonts';
 const NET_WAIT = 2500;
 // gl-v1 hat aus dem Cache geladen und konnte sich nach einem Update nicht selbst neu laden

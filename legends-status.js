@@ -145,9 +145,14 @@
     // Schreiben auf Papier: Zähler, dazu seit dl-v5 der Stand von heute, damit die Eltern-App sagen kann, was von der
     // Mission noch fehlt: offen (0/1: Schreibauftrag heute noch offen, steckt schon in heute.neu), erledigt (0/1: heute
     // einer selbst geprüft) und herzeigen (Texte, die aufs Herzeigen warten). Word und Geo schicken nichts davon.
-    const schreiben = zahlenVon(f.schreiben, ['geschrieben', 'hergezeigt', 'voll', 'offen', 'erledigt', 'herzeigen'], 99);
+    // Seit dl-v8 dazu, was heute auf Papier dran ist, damit die Eltern-App das richtige Wort sagt: art (1 Schreibauftrag,
+    // 2 Leseblatt, 3 Probe-Schularbeit; 0 nichts), blatt (Nummer des Leseblatts, 0 keins) und leseHerz (Leseblätter, die
+    // auf den Vergleich mit der Lösung warten, als Bitfeld: Blatt 1 = 1, Blatt 2 = 2, Blatt 3 = 4, Blatt 4 = 8).
+    // Nur Zahlen; fehlen die Felder (Spell bis dl-v7), bleibt alles wie bisher.
+    const schreiben = zahlenVon(f.schreiben, ['geschrieben', 'hergezeigt', 'voll', 'offen', 'erledigt', 'herzeigen', 'art', 'blatt', 'leseHerz'], 99);
     if (schreiben) {
       for (const k of ['offen', 'erledigt']) if (k in schreiben) schreiben[k] = Math.min(1, schreiben[k]);
+      for (const [k, max] of [['art', 3], ['blatt', 4], ['leseHerz', 15]]) if (k in schreiben) schreiben[k] = Math.min(max, schreiben[k]);
       o.schreiben = schreiben;
     }
     const check = zahlenVon(f.check, ['gefragt', 'gewusst'], 9999);

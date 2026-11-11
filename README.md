@@ -49,7 +49,7 @@ Alles steht in `data.js` (Format oben in der Datei). ids nie ändern – der For
   zählt der Tag, an dem die App den Termin zuerst sieht) und optional `testTitle` (sonst „GW-Test“).
   Bis gl-v1 wurde der Termin in den Speicher kopiert, darum kam ein neuer Termin nie an; der alte Wert wird
   beim Laden verworfen.
-- Danach `sw.js` → `VERSION` **und** `app.js` → `VERSION` hochzählen (Stand `gl-v4`) und neu veröffentlichen.
+- Danach `sw.js` → `VERSION` **und** `app.js` → `VERSION` hochzählen (Stand `gl-v5`) und neu veröffentlichen.
 
 So kommt ein Update aufs iPhone (seit `gl-v2`, wie Word Legends seit `wl-v5`): Mit Internet holt der
 Offline-Cache die App-Dateien immer frisch vom Server (höchstens 2,5 s warten, sonst Cache). Ein neuer
@@ -61,7 +61,9 @@ Caches (`gl-…`), denn Word Legends liegt unter derselben Adresse.
 
 ## Eltern-Verbindung und Plan-Karte
 
-Stand `gl-v4`. Vertrag: `legends-hq/docs/schnittstelle.md`. `legends-status.js` und `legends-sync.js` sind Kopien
+Stand `gl-v5` (11.11.2026: nur die neue Kopie von `legends-status.js` für Legends HQ `hq-v5` – Leseblatt und
+Probe-Schularbeit von Spell Legends; Berichte und Ampel von Geo Legends bleiben Zeichen für Zeichen gleich).
+Vertrag: `legends-hq/docs/schnittstelle.md`. `legends-status.js` und `legends-sync.js` sind Kopien
 aus `legends-hq/shared/` – nie hier ändern, sondern dort und dann `node tools/verteilen.mjs`. Seit `gl-v4` heißt
 der ganze Tag auch in den Texten der Ampel „Mission“ (z. B. „Mission geschafft ✓“, bei den Eltern „Mission
 fertig“, abends im Endspurt „Heute noch offen“); Bericht und Ampel rechnen unverändert. Die Vorlese-Texte der
